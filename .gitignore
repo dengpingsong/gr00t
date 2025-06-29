@@ -122,3 +122,13 @@ playground/
 demo_data/gr00t-gr1-apple-to-shelf/
 tmp/
 output/
+
+so100tac/
+*.mp4
+*.parquet
+*.safetensors
+*.pth
+
+# Embedded git repositories
+flash-attention/
+lerobot/

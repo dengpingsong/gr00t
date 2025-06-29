@@ -32,7 +32,8 @@ from gr00t.model.gr00t_n1 import GR00T_N1_5
 from gr00t.model.transforms import EMBODIMENT_TAG_MAPPING
 from gr00t.utils.peft import get_lora_model
 
-
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 @dataclass
 class ArgsConfig:
     """Configuration for GR00T model fine-tuning."""
@@ -101,7 +102,7 @@ class ArgsConfig:
     lora_full_model: bool = False
     """Whether to use the full model for LORA. If False, only the action head will be trained."""
 
-    dataloader_num_workers: int = 8
+    dataloader_num_workers: int = 16
     """Number of workers for data loading."""
 
     report_to: Literal["wandb", "tensorboard"] = "wandb"
