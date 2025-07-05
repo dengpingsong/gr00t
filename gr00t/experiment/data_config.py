@@ -876,6 +876,206 @@ class AgibotGenie1DataConfig:
 
         return ComposedModalityTransform(transforms=transforms)
 
+class speciDataConfig(So100DataConfig):
+    video_keys = ["video.front", "video.wrist", "video.tactile"]  # Match actual data keys
+    state_keys = ["state.single_arm", "state.gripper"]
+    action_keys = ["action.single_arm", "action.gripper"]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0]
+    action_indices = list(range(16))
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            # Process each video stream separately due to different original resolutions
+            # Use smaller resolution to reduce memory usage
+            VideoToTensor(apply_to=["video.front"]),
+            VideoCrop(apply_to=["video.front"], scale=0.9),  # Reduced crop scale
+            VideoResize(apply_to=["video.front"], height=160, width=160, interpolation="linear"),  # Smaller resolution
+            VideoColorJitter(
+                apply_to=["video.front"],
+                brightness=0.2,  # Reduced augmentation
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+            ),
+            VideoToNumpy(apply_to=["video.front"]),
+            
+            VideoToTensor(apply_to=["video.wrist"]),  # Changed from video.wrist to video.usb
+            VideoCrop(apply_to=["video.wrist"], scale=0.9),
+            VideoResize(apply_to=["video.wrist"], height=160, width=160, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=["video.wrist"],
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+            ),
+            VideoToNumpy(apply_to=["video.wrist"]),
+            
+            VideoToTensor(apply_to=["video.tactile"]),  # Changed from video.tactile to video.tactile
+            VideoCrop(apply_to=["video.tactile"], scale=0.9),
+            VideoResize(apply_to=["video.tactile"], height=160, width=160, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=["video.tactile"],
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+            ),
+            VideoToNumpy(apply_to=["video.tactile"]),
+            
+            # State and action transforms
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "min_max" for key in self.state_keys},
+            ),
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "min_max" for key in self.action_keys},
+            ),
+            # Concat all modalities
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            # Model-specific transform
+            GR00TTransform(
+                state_horizon=len(self.observation_indices),
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=32,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+
+
+class speciDataConfigModelMatch(So100DataConfig):
+    """Config that matches model expectations: front, wrist, tactile"""
+    video_keys = ["video.front", "video.wrist", "video.tactile"]  # Match model expectations
+    state_keys = ["state.single_arm", "state.gripper"]
+    action_keys = ["action.single_arm", "action.gripper"]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0]
+    action_indices = list(range(16))
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            # Process each video stream separately due to different original resolutions
+            VideoToTensor(apply_to=["video.front"]),
+            VideoCrop(apply_to=["video.front"], scale=0.9),
+            VideoResize(apply_to=["video.front"], height=160, width=160, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=["video.front"],
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+            ),
+            VideoToNumpy(apply_to=["video.front"]),
+            
+            VideoToTensor(apply_to=["video.wrist"]),
+            VideoCrop(apply_to=["video.wrist"], scale=0.9),
+            VideoResize(apply_to=["video.wrist"], height=160, width=160, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=["video.wrist"],
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+            ),
+            VideoToNumpy(apply_to=["video.wrist"]),
+            
+            VideoToTensor(apply_to=["video.tactile"]),
+            VideoCrop(apply_to=["video.tactile"], scale=0.9),
+            VideoResize(apply_to=["video.tactile"], height=160, width=160, interpolation="linear"),
+            VideoColorJitter(
+                apply_to=["video.tactile"],
+                brightness=0.2,
+                contrast=0.2,
+                saturation=0.2,
+                hue=0.05,
+            ),
+            VideoToNumpy(apply_to=["video.tactile"]),
+            
+            # State and action transforms
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "min_max" for key in self.state_keys},
+            ),
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "min_max" for key in self.action_keys},
+            ),
+            # Concat all modalities
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            # Model-specific transform
+            GR00TTransform(
+                state_horizon=len(self.observation_indices),
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=32,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
+
+
+class speciDataConfigLowMem(So100DataConfig):
+    """Memory-optimized version with even smaller resolution and reduced features"""
+    video_keys = ["video.front", "video.wrist"]  # Use only 2 cameras to reduce memory, match actual keys
+    state_keys = ["state.single_arm", "state.gripper"]
+    action_keys = ["action.single_arm", "action.gripper"]
+    language_keys = ["annotation.human.task_description"]
+    observation_indices = [0]
+    action_indices = list(range(16))
+
+    def transform(self) -> ModalityTransform:
+        transforms = [
+            # Only use 2 video streams and smaller resolution
+            VideoToTensor(apply_to=["video.front"]),
+            VideoCrop(apply_to=["video.front"], scale=0.85),
+            VideoResize(apply_to=["video.front"], height=128, width=128, interpolation="linear"),
+            VideoToNumpy(apply_to=["video.front"]),
+            
+            VideoToTensor(apply_to=["video.wrist"]),  # Changed from video.wrist to video.usb
+            VideoCrop(apply_to=["video.wrist"], scale=0.85),
+            VideoResize(apply_to=["video.wrist"], height=128, width=128, interpolation="linear"),
+            VideoToNumpy(apply_to=["video.wrist"]),
+            
+            # State and action transforms
+            StateActionToTensor(apply_to=self.state_keys),
+            StateActionTransform(
+                apply_to=self.state_keys,
+                normalization_modes={key: "min_max" for key in self.state_keys},
+            ),
+            StateActionToTensor(apply_to=self.action_keys),
+            StateActionTransform(
+                apply_to=self.action_keys,
+                normalization_modes={key: "min_max" for key in self.action_keys},
+            ),
+            # Concat all modalities
+            ConcatTransform(
+                video_concat_order=self.video_keys,
+                state_concat_order=self.state_keys,
+                action_concat_order=self.action_keys,
+            ),
+            # Model-specific transform
+            GR00TTransform(
+                state_horizon=len(self.observation_indices),
+                action_horizon=len(self.action_indices),
+                max_state_dim=64,
+                max_action_dim=32,
+            ),
+        ]
+        return ComposedModalityTransform(transforms=transforms)
 
 ###########################################################################################
 
@@ -892,4 +1092,10 @@ DATA_CONFIG_MAP = {
     "unitree_g1_full_body": UnitreeG1FullBodyDataConfig(),
     "oxe_droid": OxeDroidDataConfig(),
     "agibot_genie1": AgibotGenie1DataConfig(),
+    "tactail_gripper": speciDataConfig(), 
+    "speci_lowmem": speciDataConfigLowMem(),
+    "speci_model_match": speciDataConfigModelMatch(), 
 }
+
+
+
