@@ -102,7 +102,7 @@ class Normalizer:
         self.mode = mode
         self.statistics = statistics
         for key, value in self.statistics.items():
-            self.statistics[key] = torch.tensor(value)
+            self.statistics[key] = torch.tensor(value, dtype=torch.float32)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         assert isinstance(

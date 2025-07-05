@@ -51,7 +51,7 @@ class Eagle2_5_VLConfig(PretrainedConfig):
         max_dynamic_tiles=6,
         mlp_checkpoint=False,
         initializer_range=0.02,
-        _attn_implementation="flash_attention_2",
+        _attn_implementation="eager",
         _attn_implementation_autoset=False,
         llm_config=None,
         image_token_index=None,

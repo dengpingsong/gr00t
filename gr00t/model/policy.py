@@ -17,11 +17,16 @@ import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
+import warnings
 
 import numpy as np
 import torch
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HFValidationError, RepositoryNotFoundError
+
+# Suppress common warnings for cleaner output
+warnings.filterwarnings("ignore", message="`use_fast` is set to `True`")
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 from gr00t.data.dataset import ModalityConfig
 from gr00t.data.embodiment_tags import EmbodimentTag
@@ -30,6 +35,7 @@ from gr00t.data.transform.base import ComposedModalityTransform
 from gr00t.model.gr00t_n1 import GR00T_N1_5
 
 COMPUTE_DTYPE = torch.bfloat16
+
 
 
 class BasePolicy(ABC):
@@ -69,7 +75,7 @@ class Gr00tPolicy(BasePolicy):
         modality_config: Dict[str, ModalityConfig],
         modality_transform: ComposedModalityTransform,
         denoising_steps: Optional[int] = None,
-        device: Union[int, str] = "cuda" if torch.cuda.is_available() else "cpu",
+        device: Union[int, str] =  "mps" if torch.backends.mps.is_available() else ( "cuda" if torch.cuda.is_available() else "cpu")
     ):
         """
         Initialize the Gr00tPolicy.
@@ -82,15 +88,20 @@ class Gr00tPolicy(BasePolicy):
             denoising_steps: Number of denoising steps to use for the action head.
             device (Union[int, str]): Device to run the model on.
         """
-        try:
-            # NOTE(YL) this returns the local path to the model which is normally
-            # saved in ~/.cache/huggingface/hub/
-            model_path = snapshot_download(model_path, repo_type="model")
-            # HFValidationError, RepositoryNotFoundError
-        except (HFValidationError, RepositoryNotFoundError):
-            print(
-                f"Model not found or avail in the huggingface hub. Loading from local path: {model_path}"
-            )
+        # Check if model_path is a local path or a HuggingFace repo
+        if not Path(model_path).exists():
+            # Try to download from HuggingFace Hub
+            try:
+                # NOTE(YL) this returns the local path to the model which is normally
+                # saved in ~/.cache/huggingface/hub/
+                model_path = snapshot_download(model_path, repo_type="model")
+                # HFValidationError, RepositoryNotFoundError
+            except (HFValidationError, RepositoryNotFoundError):
+                print(
+                    f"Model not found or avail in the huggingface hub. Loading from local path: {model_path}"
+                )
+        else:
+            print(f"Loading from local path: {model_path}")
 
         self._modality_config = modality_config
         self._modality_transform = modality_transform
@@ -179,8 +190,16 @@ class Gr00tPolicy(BasePolicy):
 
     def _get_action_from_normalized_input(self, normalized_input: Dict[str, Any]) -> torch.Tensor:
         # Set up autocast context if needed
-        with torch.inference_mode(), torch.autocast(device_type="cuda", dtype=COMPUTE_DTYPE):
-            model_pred = self.model.get_action(normalized_input)
+        device_type = str(self.device) if isinstance(self.device, int) else self.device
+        
+        # Use autocast only for supported device types
+        if device_type in ["cuda", "cpu"]:
+            with torch.inference_mode(), torch.autocast(device_type=device_type, dtype=COMPUTE_DTYPE):
+                model_pred = self.model.get_action(normalized_input)
+        else:
+            # For MPS and other devices, use inference_mode without autocast
+            with torch.inference_mode():
+                model_pred = self.model.get_action(normalized_input)
 
         normalized_action = model_pred["action_pred"].float()
         return normalized_action

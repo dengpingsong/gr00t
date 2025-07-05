@@ -220,9 +220,8 @@ class GR00T_N1_5(PreTrainedModel):
                 f"Model not found or avail in the huggingface hub. Loading from local path: {pretrained_model_name_or_path}"
             )
             local_model_path = pretrained_model_name_or_path
-
         pretrained_model = super().from_pretrained(
-            local_model_path, local_model_path=local_model_path, **kwargs
+            local_model_path, local_model_path=local_model_path,**kwargs
         )
 
         pretrained_model.backbone.set_trainable_parameters(

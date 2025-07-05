@@ -104,6 +104,10 @@ dist
 # Data
 !**/alpaca-data-conversation.json
 
+# Video and dataset files
+*.mp4
+*.parquet
+
 # Editor
 .idea
 *.swp

@@ -598,15 +598,15 @@ class LeRobotSingleDataset(Dataset):
             expected_shape = (len(step_indices), *array.shape[1:])
 
         # Pad the data
-        output = np.zeros(expected_shape)
+        output = np.zeros(expected_shape, dtype=np.float32)
         # Assign the non-padded data
-        output[~padding_positions] = raw_data
+        output[~padding_positions] = raw_data.astype(np.float32)
         # If there exists some padding, pad the data
         if padding_positions.any():
             if padding_strategy == "first_last":
                 # Use first / last step data to pad
-                front_padding_data = array[0]
-                end_padding_data = array[-1]
+                front_padding_data = array[0].astype(np.float32)
+                end_padding_data = array[-1].astype(np.float32)
                 output[front_padding_indices] = front_padding_data
                 output[end_padding_indices] = end_padding_data
             elif padding_strategy == "zero":
@@ -709,7 +709,7 @@ class LeRobotSingleDataset(Dataset):
         # Get the data array, shape: (T, D)
         assert self.curr_traj_data is not None, f"No data found for {trajectory_id=}"
         assert le_key in self.curr_traj_data.columns, f"No {le_key} found in {trajectory_id=}"
-        data_array: np.ndarray = np.stack(self.curr_traj_data[le_key])  # type: ignore
+        data_array: np.ndarray = np.stack(self.curr_traj_data[le_key]).astype(np.float32)  # type: ignore
         assert data_array.ndim == 2, f"Expected 2D array, got {data_array.shape} array"
         le_indices = np.arange(
             le_state_or_action_cfg[key].start,

@@ -16,6 +16,7 @@
 import json
 import os
 from pathlib import Path
+from typing import Any, Dict, List, Union
 
 import torch
 from transformers import TrainingArguments, set_seed
@@ -28,6 +29,33 @@ from gr00t.utils.experiment import (
     CheckpointFormatCallback,
     safe_save_model_for_hf_trainer,
 )
+
+
+class Float32DataCollator(DefaultDataCollator):
+    """Custom data collator that ensures all tensors are float32 for MPS compatibility."""
+    
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
+        # First use the default collator
+        batch = super().__call__(features)
+        
+        # Convert all tensors to float32
+        def convert_to_float32(obj):
+            if isinstance(obj, torch.Tensor):
+                if obj.dtype in [torch.float64, torch.double]:
+                    return obj.to(torch.float32)
+                elif obj.dtype == torch.bfloat16:
+                    return obj.to(torch.float32)
+                return obj
+            elif isinstance(obj, dict):
+                return {k: convert_to_float32(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_to_float32(item) for item in obj]
+            elif isinstance(obj, tuple):
+                return tuple(convert_to_float32(item) for item in obj)
+            else:
+                return obj
+        
+        return convert_to_float32(batch)
 
 
 class TrainRunner:
@@ -52,7 +80,7 @@ class TrainRunner:
         )
         print(f"Run name: {training_args.run_name}")
 
-        data_collator = DefaultDataCollator()
+        data_collator = Float32DataCollator()
 
         # Make sure model_dtype and training_args dtype are compatible
         compute_dtype = torch.float16 if training_args.bf16 else torch.float32
@@ -130,7 +158,7 @@ class TrainRunner:
         # Set the gradient accumulation steps if global_batch_size is provided
         if global_batch_size is not None:
             bs = training_args.per_device_train_batch_size
-            num_gpus = torch.cuda.device_count()
+            num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
             grad_acc = max(1, global_batch_size // (bs * num_gpus))
             training_args.gradient_accumulation_steps = grad_acc
             print(
@@ -157,11 +185,15 @@ class TrainRunner:
         train_dl_len = len(trainer.get_train_dataloader())
         # eval_dl_len = len(trainer.get_eval_dataloader()) # @note (k2): How to manage eval dataloader?
 
+        gpu_memory_info = ""
+        if torch.cuda.is_available():
+            gpu_memory_info = f"GPU memory before training: {torch.cuda.memory_allocated() / 1024 / 1024 / 1024} GB"
+        
         print(
             f"train dataloader length: {train_dl_len}\n"
             # f"eval dataloader length: {eval_dl_len}\n"
             f"train dataset length: {len(trainer.train_dataset)}\n"
-            f"GPU memory before training: {torch.cuda.memory_allocated() / 1024 / 1024 / 1024} GB",
+            f"{gpu_memory_info}",
             flush=True,
         )
         return trainer

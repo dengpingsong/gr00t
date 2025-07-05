@@ -1,5 +1,5 @@
 {
-    "_attn_implementation": "flash_attention_2",
+    "_attn_implementation": "eager",
     "_commit_hash": null,
     "architectures": [
         "Eagle2_5_VLForConditionalGeneration"

@@ -122,7 +122,12 @@ if __name__ == "__main__":
     DATASET_PATH = os.path.join(REPO_PATH, "demo_data/robot_sim.PickNPlace")
     EMBODIMENT_TAG = "gr1"
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
 
     data_config = DATA_CONFIG_MAP["fourier_gr1_arms_only"]
     modality_config = data_config.modality_config()

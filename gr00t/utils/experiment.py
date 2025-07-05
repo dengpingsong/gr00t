@@ -23,7 +23,8 @@ from transformers import Trainer, TrainerCallback
 def safe_save_model_for_hf_trainer(trainer: Trainer, output_dir: str):
     """Collects the state dict and dump to disk."""
     if trainer.deepspeed:
-        torch.cuda.synchronize()
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
         trainer.save_model(output_dir, _internal_call=True)
         return
 

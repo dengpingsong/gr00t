@@ -20,9 +20,40 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Literal
 
+import numpy as np
 import torch
 import tyro
 from transformers import TrainingArguments
+
+# 抑制 stderr 输出（慎用）
+sys.stderr = open(os.devnull, "w")
+import warnings
+import logging
+
+# 忽略所有警告
+warnings.filterwarnings("ignore")
+
+# 将日志级别设置为 ERROR，忽略所有 WARNING 和 INFO 级别的日志
+logging.basicConfig(level=logging.ERROR)
+
+# Force float32 for MPS compatibility
+if torch.backends.mps.is_available():
+    torch.set_default_dtype(torch.float32)
+    # Also set numpy default to float32
+    np.seterr(all='ignore')  # Ignore numpy warnings
+    import numpy as np
+    np.set_printoptions(precision=4, suppress=True)  # Cleaner numpy output
+    # Also set numpy default to float32
+    import numpy as np
+    np.set_printoptions(suppress=True)
+    # Force numpy default dtype to float32
+    np.seterr(all='ignore')
+
+# Suppress warnings to clean up output
+import warnings
+warnings.filterwarnings("ignore")
+# Disable Albumentations update check
+os.environ["NO_ALBUMENTATIONS_UPDATE"] = "1"
 
 from gr00t.data.dataset import LeRobotMixtureDataset, LeRobotSingleDataset
 from gr00t.data.schema import EmbodimentTag
@@ -31,6 +62,26 @@ from gr00t.experiment.runner import TrainRunner
 from gr00t.model.gr00t_n1 import GR00T_N1_5
 from gr00t.model.transforms import EMBODIMENT_TAG_MAPPING
 from gr00t.utils.peft import get_lora_model
+
+
+def ensure_float32_collator(batch):
+    """Custom collator to ensure all tensors are float32 for MPS compatibility."""
+    import torch
+    
+    def convert_to_float32(item):
+        if isinstance(item, torch.Tensor):
+            if item.dtype == torch.float64:
+                return item.to(torch.float32)
+            return item
+        elif isinstance(item, dict):
+            return {k: convert_to_float32(v) for k, v in item.items()}
+        elif isinstance(item, list):
+            return [convert_to_float32(v) for v in item]
+        else:
+            return item
+    
+    # Convert all items in batch to float32
+    return [convert_to_float32(item) for item in batch]
 
 
 @dataclass
@@ -48,7 +99,7 @@ class ArgsConfig:
     """Data configuration name from DATA_CONFIG_MAP, we assume all datasets have the same data config"""
 
     # Training parameters
-    batch_size: int = 32
+    batch_size: int = 8  # Reduced from 32 for MPS compatibility
     """Batch size per GPU for training."""
 
     max_steps: int = 10000
@@ -101,7 +152,7 @@ class ArgsConfig:
     lora_full_model: bool = False
     """Whether to use the full model for LORA. If False, only the action head will be trained."""
 
-    dataloader_num_workers: int = 8
+    dataloader_num_workers: int = 2  # Reduced from 8 for MPS compatibility
     """Number of workers for data loading."""
 
     report_to: Literal["wandb", "tensorboard"] = "wandb"
@@ -130,6 +181,10 @@ class ArgsConfig:
 
 def main(config: ArgsConfig):
     """Main training function."""
+    # Suppress additional warnings for clean output
+    warnings.filterwarnings("ignore", message="`use_fast` is set to `True`")
+    warnings.filterwarnings("ignore", message="Class AVF.*is implemented in both")
+    
     # ------------ step 1: load dataset ------------
     embodiment_tag = EmbodimentTag(config.embodiment_tag)
 
@@ -176,8 +231,13 @@ def main(config: ArgsConfig):
             },
         )
         print(f"Loaded {len(single_datasets)} datasets, with {config.dataset_path} ")
+    
+    print(f"Loaded dataset with {len(train_dataset)} samples")
 
     # ------------ step 2: load model ------------
+    # Check device type for model configuration
+    device_type = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    
     model = GR00T_N1_5.from_pretrained(
         pretrained_model_name_or_path=config.base_model_path,
         tune_llm=config.tune_llm,  # backbone's LLM
@@ -186,9 +246,14 @@ def main(config: ArgsConfig):
         tune_diffusion_model=config.tune_diffusion_model,  # action head's DiT
     )
 
-    # Set the model's compute_dtype to bfloat16
-    model.compute_dtype = "bfloat16"
-    model.config.compute_dtype = "bfloat16"
+    # Set the model's compute_dtype based on device capability
+    if device_type == "cuda":
+        model.compute_dtype = "bfloat16"
+        model.config.compute_dtype = "bfloat16"
+    else:
+        # Use float32 for MPS and CPU
+        model.compute_dtype = "float32"
+        model.config.compute_dtype = "float32"
 
     if config.lora_rank > 0:
         model = get_lora_model(
@@ -200,14 +265,19 @@ def main(config: ArgsConfig):
         )
 
     # 2.1 modify training args
+    # Check device compatibility for training precision
+    device_type = "cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu")
+    use_bf16 = device_type == "cuda"  # Only use bf16 on CUDA devices
+    
     training_args = TrainingArguments(
         output_dir=config.output_dir,
         run_name=None,
         remove_unused_columns=False,
         deepspeed="",
         gradient_checkpointing=False,
-        bf16=True,
-        tf32=True,
+        bf16=use_bf16,
+        fp16=False,  # Disable fp16 to avoid conflicts
+        tf32=False,  # Disable TF32 for compatibility with non-NVIDIA GPUs
         per_device_train_batch_size=config.batch_size,
         gradient_accumulation_steps=1,
         dataloader_num_workers=config.dataloader_num_workers,
@@ -245,6 +315,24 @@ def main(config: ArgsConfig):
     )
 
     # 2.3 run experiment
+    print("Starting training...")
+    print(f"Total samples in dataset: {len(train_dataset)}")
+    
+    # For debugging - check a sample from the dataset
+    if len(train_dataset) > 0:
+        sample = train_dataset[0]
+        print(f"Sample keys: {list(sample.keys())}")
+        for key, value in sample.items():
+            if isinstance(value, (np.ndarray, torch.Tensor)):
+                print(f"  {key}: {type(value)} shape={getattr(value, 'shape', 'N/A')} dtype={getattr(value, 'dtype', 'N/A')}")
+            elif isinstance(value, dict):
+                print(f"  {key}: dict with {len(value)} items")
+                for sub_key, sub_value in value.items():
+                    if isinstance(sub_value, (np.ndarray, torch.Tensor)):
+                        print(f"    {sub_key}: {type(sub_value)} shape={getattr(sub_value, 'shape', 'N/A')} dtype={getattr(sub_value, 'dtype', 'N/A')}")
+            else:
+                print(f"  {key}: {type(value)}")
+    
     experiment.train()
 
 
@@ -260,25 +348,37 @@ if __name__ == "__main__":
         print(f"{key}: {value}")
     print("=" * 50 + "\n")
 
-    available_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 1
+    # Check available devices (GPU/MPS/CPU)
+    if torch.cuda.is_available():
+        available_gpus = torch.cuda.device_count()
+        device_type = "cuda"
+    elif torch.backends.mps.is_available():
+        available_gpus = 1  # MPS only supports one device
+        device_type = "mps"
+    else:
+        available_gpus = 1  # CPU
+        device_type = "cpu"
 
     # Validate GPU configuration
     assert (
         config.num_gpus <= available_gpus
-    ), f"Number of GPUs requested ({config.num_gpus}) is greater than the available GPUs ({available_gpus})"
+    ), f"Number of GPUs requested ({config.num_gpus}) is greater than the available devices ({available_gpus})"
     assert config.num_gpus > 0, "Number of GPUs must be greater than 0"
-    print(f"Using {config.num_gpus} GPUs")
+    print(f"Using {config.num_gpus} {device_type} device(s)")
 
     if config.num_gpus == 1:
-        # Single GPU mode - set CUDA_VISIBLE_DEVICES=0
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        # Single device mode
+        if device_type == "cuda":
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
         # Run the script normally
         main(config)
     else:
         if os.environ.get("IS_TORCHRUN", "0") == "1":
             main(config)
         else:
-            # Multi-GPU mode - use torchrun
+            # Multi-GPU mode - use torchrun (only for CUDA)
+            if device_type != "cuda":
+                raise ValueError("Multi-GPU training is only supported with CUDA devices")
             script_path = Path(__file__).absolute()
             # Remove any existing CUDA_VISIBLE_DEVICES from environment
             if "CUDA_VISIBLE_DEVICES" in os.environ:

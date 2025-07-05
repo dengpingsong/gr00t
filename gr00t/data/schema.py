@@ -67,8 +67,8 @@ class LeRobotStateActionMetadata(LeRobotModalityField):
     )
     absolute: bool = Field(default=True, description="Whether the modality is absolute")
     dtype: str = Field(
-        default="float64",
-        description="The data type of the modality. Defaults to float64.",
+        default="float32",
+        description="The data type of the modality. Defaults to float32 (MPS compatible).",
     )
     range: Optional[tuple[float, float]] = Field(
         default=None,
